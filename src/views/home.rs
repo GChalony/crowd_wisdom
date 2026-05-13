@@ -5,7 +5,7 @@ use dioxus::{
     html::{button::value, u::flex_direction},
     prelude::*,
 };
-use crate::backend::send_answer;
+use crate::backend::{get_question, send_answer};
 
 /// The Home page component that will be rendered when the current route is `[Route::Home]`
 #[component]
@@ -19,9 +19,12 @@ pub fn Home() -> Element {
 pub fn Question() -> Element {
     let answer: Signal<Option<i32>> = use_signal(|| Option::None);
     tracing::info!("Answered ? {:?}", *answer.read());
+
+    let question = use_server_future(async || {get_question().await})?;
+
     rsx! {
         if answer.read().is_none() {
-            PromptQuestion { answer }
+            PromptQuestion { question: question().unwrap().unwrap(), answer }
         } else {
             ShowAnswer { answer }
         }
@@ -29,7 +32,7 @@ pub fn Question() -> Element {
 }
 
 #[component]
-fn PromptQuestion(answer: Signal<Option<i32>>) -> Element {
+fn PromptQuestion(question: String, answer: Signal<Option<i32>>) -> Element {
     let mut pending_answer = use_signal(|| Some(0));
 
     let fill_answer = move |text: Event<FormData>| {
@@ -80,7 +83,7 @@ fn PromptQuestion(answer: Signal<Option<i32>>) -> Element {
                         font-size: 1rem;
                         line-height: 1.5;
                     ",
-                    "Quelle est la température de fusion de l'aluminium ?"
+                    "{question}"
                 }
 
                 input {
