@@ -2,9 +2,8 @@
 // need dioxus
 use dioxus::prelude::*;
 
-use views::{Home, Navbar};
+use views::{Home, Navbar, CreateQuizz, Play};
 
-mod components;
 mod views;
 mod backend;
 
@@ -18,6 +17,10 @@ enum Route {
         // the component for that route will be rendered. The component name that is rendered defaults to the variant name.
         #[route("/")]
         Home {},
+        #[route("/new")]
+        CreateQuizz {},
+        #[route("/play")]
+        Play {}
 }
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
