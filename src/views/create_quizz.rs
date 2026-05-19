@@ -1,21 +1,12 @@
-use dioxus::{core::ElementId, html::div, prelude::*};
+use dioxus::{core::ElementId, html::div, logger::tracing, prelude::*};
 use dioxus_free_icons::{Icon, icons::fa_solid_icons::{FaPlus, FaTrash}};
 
-use crate::views::home::{Column, Row};
-
-#[derive(PartialEq, Debug, Clone)]
-pub struct Question {
-    question: String,
-    answer: i32
-}
-
-pub struct Quizz {
-    questions: Vec<Question>
-}
+use crate::{backend::create_quizz, views::home::{Column, Row}};
+use crate::backend::{Quizz, Question};
 
 #[component]
 pub fn CreateQuizz() -> Element {
-    let mut quizz = use_signal(|| Quizz { questions: vec![] });
+    let mut quizz = use_signal(|| Quizz::new());
 
     let add_question = move |q: Question| {
         quizz.write().questions.push(q);
@@ -53,7 +44,7 @@ pub fn CreateQuizz() -> Element {
                     display: "flex",
                     align_items: "center",
                     justify_content: "center",
-                    Create {}
+                    Create { quizz }
                 }
             }
         }
@@ -136,7 +127,7 @@ fn Divider() -> Element {
 }
 
 #[component]
-fn Create() -> Element {
+fn Create(quizz: Signal<Quizz>) -> Element {
     rsx! {
         button {
             padding: "1em 3em",
@@ -148,6 +139,12 @@ fn Create() -> Element {
                     border-radius: 4px;
                     cursor: pointer;
                 ",
+            onclick: move |_| {
+                tracing::info!("Creating quizz");
+                async move {
+                    create_quizz(quizz.read().clone()).await.unwrap();
+                }
+            },
             "Create"
         }
     }

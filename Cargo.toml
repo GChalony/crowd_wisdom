@@ -10,6 +10,10 @@ edition = "2021"
 dioxus = { version = "0.7.1", features = ["router", "fullstack"] }
 dioxus-free-icons = { version = "0.10.0", features = ["font-awesome-solid"] }
 tokio = "1.52.3"
+rusqlite = { version = "0.32.1", optional = true }
+serde = "1.0.228"
+serde_json = "1.0.149"
+rand = { version = "0.10.1", optional = true }
 
 [features]
 default = ["web"]
@@ -20,4 +24,4 @@ desktop = ["dioxus/desktop"]
 # The feature that are only required for the mobile = ["dioxus/mobile"] build target should be optional and only enabled in the mobile = ["dioxus/mobile"] feature
 mobile = ["dioxus/mobile"]
 # The feature that are only required for the server = ["dioxus/server"] build target should be optional and only enabled in the server = ["dioxus/server"] feature
-server = ["dioxus/server"]
+server = ["dioxus/server", "dep:rusqlite", "dep:rand"]
