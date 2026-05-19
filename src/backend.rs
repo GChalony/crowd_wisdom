@@ -96,7 +96,8 @@ pub async fn create_quizz(quizz: Quizz) -> Result<()> {
             tx.execute(
                 "INSERT INTO question (quizz_id, text, answer, position) VALUES (?1, ?2, ?3, ?4)",
                 (quizz_id, question.question, question.answer, i),
-            ).unwrap();
+            )
+            .unwrap();
         }
         tx.commit().unwrap();
 
@@ -121,9 +122,24 @@ pub async fn send_answer(answer: i32) -> Result<()> {
     Ok(())
 }
 
-#[get("/question")]
-pub async fn get_question() -> Result<String> {
-    Ok("Quelle est la température de fusion de l'aluminium ?".to_string())
+#[get("/question/:quizz_id/:position")]
+pub async fn get_question(quizz_id: u32, position: u32) -> Result<String> {
+    let res: String = DB.with(|conn| {
+        conn.prepare(
+            "SELECT text FROM quizz 
+             JOIN question ON question.quizz_id = quizz.id
+             WHERE public_id == (?1)",
+        )
+        .unwrap()
+        .query([quizz_id])
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .get(0)
+        .unwrap()
+    });
+    Ok(res)
 }
 
 #[get("/api/get_count/{question_id}")]

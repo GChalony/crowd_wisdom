@@ -19,8 +19,10 @@ enum Route {
         Home {},
         #[route("/new")]
         CreateQuizz {},
-        #[route("/play")]
-        Play {}
+        #[route("/play/:quizz_id")]
+        Play {
+            quizz_id: u32
+        }
 }
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");

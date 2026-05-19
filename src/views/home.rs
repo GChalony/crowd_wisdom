@@ -24,7 +24,11 @@ pub fn Home() -> Element {
         p {
             "To discover that yourself, you can either create a new Quizz, or join one that already exists!"
         }
-        div { display: "flex", justify_content: "center",
+        div {
+            display: "flex",
+            justify_content: "center",
+            gap: "4em",
+            margin_top: "2em",
 
             button {
 
@@ -40,6 +44,30 @@ pub fn Home() -> Element {
                     "Create new quizz"
                 }
             }
+            JoinGame {}
+        
+        }
+    }
+}
+
+
+#[component]
+pub fn JoinGame() -> Element {
+    let mut game_id: Signal<String> = use_signal(|| "".to_string());
+    let fill_game_id = move |text: Event<FormData>| {
+        game_id.set(text.value());
+    };
+    
+    rsx! {
+        div { display: "flex", align_content: "center", gap: "1em",
+            input {
+                r#type: "number",
+                width: "5em",
+                placeholder: "Game ID",
+                style: "width: 8em",
+                value: "{game_id}",
+                oninput: fill_game_id,
+            }
             button {
                 Link {
                     display: "flex",
@@ -47,13 +75,14 @@ pub fn Home() -> Element {
                     text_decoration: "none",
                     color: "inherit",
                     gap: "10px",
-                    to: Route::Play {},
+                    to: Route::Play {
+                        quizz_id: game_id.read().parse().unwrap_or(0),
+                    },
 
                     Icon { icon: FaPeopleGroup }
                     "Join game"
                 }
             }
-        
         }
     }
 }

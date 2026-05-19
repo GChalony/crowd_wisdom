@@ -3,20 +3,21 @@ use dioxus::{fullstack::{Lazy, WebSocketOptions}, logger::tracing, prelude::*};
 use crate::backend::{get_question, send_answer, get_count};
 
 #[component]
-pub fn Play() -> Element {
-    Question()
+pub fn Play(quizz_id: u32) -> Element {
+    let question = use_loader(move || get_question(quizz_id, 0))?;
+    rsx! {
+        Question { question }
+    }
 }
 
 #[component]
-pub fn Question() -> Element {
+pub fn Question(question: String) -> Element {
     let answer: Signal<Option<i32>> = use_signal(|| Option::None);
     tracing::info!("Answered ? {:?}", *answer.read());
 
-    let question = use_server_future(async || {get_question().await})?;
-
     rsx! {
         if answer.read().is_none() {
-            PromptQuestion { question: question().unwrap().unwrap(), answer }
+            PromptQuestion { question, answer }
         } else {
             ShowAnswer { answer }
         }
