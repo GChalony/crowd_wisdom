@@ -7,21 +7,22 @@ use dioxus::fullstack::TypedWebsocket;
 use std::sync::Arc;
 use std::time::Duration;
 #[cfg(feature = "server")]
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, watch};
 
 #[cfg(feature = "server")]
 #[derive(Clone)]
 struct AppState {
     answers: Arc<Mutex<Vec<i32>>>,  // TODO : replace with DB
-    tx: broadcast::Sender<usize>,
+    tx: watch::Sender<usize>,
+    rx: watch::Receiver<usize>
 }
 
 #[cfg(feature = "server")]
 static DATABASE: Lazy<AppState> = Lazy::new(|| async move {
-    let (tx, _) = broadcast::channel(16);
+    let (tx, rx) = watch::channel(0usize);
     let answers = Arc::new(Mutex::new(vec![]));
     dioxus::Ok(
-        AppState {answers, tx}
+        AppState {answers, tx, rx}
     )
 });
 
@@ -39,23 +40,19 @@ pub async fn get_question() -> Result<String> {
     Ok("Quelle est la température de fusion de l'aluminium ?".to_string())
 }
 
-#[get("/api/get_count")]
-pub async fn get_count(options: WebSocketOptions) -> Result<Websocket<usize, usize>> {
-    use tokio::time::sleep;
-
-    let mut rx = DATABASE.tx.subscribe();
+#[get("/api/get_count/{question_id}")]
+pub async fn get_count(question_id: u16, options: WebSocketOptions) -> Result<Websocket<usize, usize>> {
     tracing::info!("Creating websocket");
 
-    Ok(options.on_upgrade(move |mut socket| async move {
-        let mut count = 0;
-        loop {
-            tracing::info!("Count: {}", count);
-            sleep(Duration::from_secs(1)).await;
-            count += 1;
-            socket.send(count).await;
-        }
+    Ok(options.on_upgrade(move |mut socket| async move {     
+        let mut rx = DATABASE.rx.clone();
+        let current_count = *rx.borrow();
+        socket.send(current_count).await.unwrap();
+        
 
-        while let Ok(count) = rx.recv().await {
+        loop {
+            rx.changed().await.unwrap();
+            let count = *rx.borrow();
             _ = socket.send(count).await;
         };
     }))

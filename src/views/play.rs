@@ -135,7 +135,7 @@ fn ShowAnswer(answer: Signal<Option<i32>>) -> Element {
     let mut count = use_signal(|| 0);
     use_future(move || async move {
         // Connect to the websocket
-        let socket = get_count(WebSocketOptions::new()).await.unwrap();
+        let socket = get_count(0, WebSocketOptions::new()).await.unwrap();
         tracing::info!("Created socket on client side");
         // Wait for the next message with `.recv()`
         while let Ok(msg) = socket.recv().await {
