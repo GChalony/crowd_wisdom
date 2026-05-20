@@ -1,7 +1,7 @@
 use dioxus::{core::ElementId, html::div, logger::tracing, prelude::*};
 use dioxus_free_icons::{Icon, icons::fa_solid_icons::{FaPlus, FaTrash}};
 
-use crate::{backend::create_quizz, views::home::{Column, Row}};
+use crate::{Route, backend::create_quizz, views::home::{Column, Row}};
 use crate::backend::{Quizz, Question};
 
 #[component]
@@ -128,6 +128,7 @@ fn Divider() -> Element {
 
 #[component]
 fn Create(quizz: Signal<Quizz>) -> Element {
+    let navigator = navigator();
     rsx! {
         button {
             padding: "1em 3em",
@@ -142,7 +143,8 @@ fn Create(quizz: Signal<Quizz>) -> Element {
             onclick: move |_| {
                 tracing::info!("Creating quizz");
                 async move {
-                    create_quizz(quizz.read().clone()).await.unwrap();
+                    let quizz_id = create_quizz(quizz.read().clone()).await.unwrap();
+                    navigator.push(Route::Play { quizz_id: quizz_id });
                 }
             },
             "Create"

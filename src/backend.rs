@@ -83,12 +83,12 @@ impl Quizz {
 }
 
 #[post("/create")]
-pub async fn create_quizz(quizz: Quizz) -> Result<()> {
+pub async fn create_quizz(quizz: Quizz) -> Result<u32> {
     tracing::info!("Creating quizz {quizz:?}");
     DB.with(|mut conn| {
         let tx = conn.unchecked_transaction()?;
         // Generate a 4-digit public id
-        let public_id: i32 = rand::random_range(1000..9999);
+        let public_id: u32 = rand::random_range(1000..9999);
         tx.execute("INSERT INTO quizz (public_id) VALUES (?1)", (public_id,))?;
         let quizz_id = tx.last_insert_rowid();
 
@@ -101,21 +101,20 @@ pub async fn create_quizz(quizz: Quizz) -> Result<()> {
         }
         tx.commit().unwrap();
 
-        Ok::<(), CapturedError>(())
-    })?;
-    Ok(())
+        Ok::<_, CapturedError>(public_id)
+    })
 }
 
-#[post("/question")]
-pub async fn send_answer(answer: i32) -> Result<()> {
+#[post("/question/:question_id")]
+pub async fn send_answer(question_id: u32, answer: i32) -> Result<()> {
     tracing::info!("Sent answer {}", answer);
     let mut answers = DATABASE.answers.lock().await;
     answers.push(answer);
     DATABASE.tx.send(answers.len()).unwrap();
     DB.with(|con| {
         con.execute(
-            "INSERT INTO quizz (text, answer) VALUES (?1, ?2)",
-            ("How old am I?", answer),
+            "INSERT INTO answer (question_id, value) VALUES (?1, ?2)",
+            (question_id, answer),
         )
         .unwrap()
     });

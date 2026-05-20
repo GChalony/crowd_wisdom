@@ -35,7 +35,7 @@ fn PromptQuestion(question: String, answer: Signal<Option<i32>>) -> Element {
     let submit_answer = move |_| async move {
         let resp = *pending_answer.read(); 
         
-        send_answer(resp.unwrap()).await.unwrap();
+        send_answer(0, resp.unwrap()).await.unwrap();
         answer.set(resp);
     };
 
