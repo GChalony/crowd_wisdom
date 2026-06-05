@@ -15,6 +15,8 @@ serde = "1.0.228"
 serde_json = "1.0.149"
 rand = { version = "0.10.1", optional = true }
 uuid = { version = "1.23.1", features = ["serde", "v4", "js"] }
+# QR code matrix generation (pure Rust, no image/svg renderers needed).
+qrcode = { version = "0.14", default-features = false }
 
 [features]
 default = ["web"]

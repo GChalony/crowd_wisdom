@@ -1,4 +1,5 @@
 use dioxus::{fullstack::WebSocketOptions, logger::tracing, prelude::*};
+use qrcode::{Color, QrCode};
 
 use crate::{
     backend::{admin_start_game, get_lobby_state, LobbyUpdate, User},
@@ -26,6 +27,19 @@ pub fn Lobby(quizz_id: u32) -> Element {
     });
 
     let navigator = use_navigator();
+
+    // Full URL of this lobby page — populated client-side (window.location is browser-only).
+    let mut lobby_url: Signal<String> = use_signal(String::new);
+    let mut copied: Signal<bool> = use_signal(|| false);
+
+    use_effect(move || {
+        spawn(async move {
+            let mut eval = document::eval("dioxus.send(window.location.origin);");
+            if let Ok(origin) = eval.recv::<String>().await {
+                lobby_url.set(format!("{origin}/lobby/{quizz_id}"));
+            }
+        });
+    });
 
     use_effect(move || {
         spawn(async move {
@@ -120,6 +134,32 @@ pub fn Lobby(quizz_id: u32) -> Element {
                 }
             }
 
+            // ── Share card (visible to everyone) ──────────────────────────────
+            if !lobby_url.read().is_empty() {
+                div { class: "share-card",
+                    p { class: "share-title", "🔗 Invite players" }
+
+                    // URL row with copy button
+                    div { class: "share-url-row",
+                        span { class: "share-url-text", "{lobby_url}" }
+                        button {
+                            class: "btn-copy",
+                            onclick: move |_| {
+                                let url = lobby_url();
+                                async move {
+                                    document::eval(&format!("navigator.clipboard.writeText(\"{url}\");"));
+                                    copied.set(true);
+                                }
+                            },
+                            if copied() { "✓ Copied!" } else { "Copy" }
+                        }
+                    }
+
+                    // Inline SVG QR code — no external service, fully offline
+                    QrCodeSvg { data: lobby_url() }
+                }
+            }
+
             // ── Start button — admin only ────────────────────────────────────
             // Clicking calls admin_start_game; the server broadcasts GameStarted
             // to all lobby WebSocket connections, which navigate everyone to /play.
@@ -134,6 +174,59 @@ pub fn Lobby(quizz_id: u32) -> Element {
                     "▶ Start Quiz"
                 }
             }
+        }
+    }
+}
+
+// ── QR code component ────────────────────────────────────────────────────────
+// Renders the QR matrix as inline SVG <rect> elements.
+// No external service, no dangerous_inner_html, works fully offline.
+#[component]
+fn QrCodeSvg(data: String) -> Element {
+    let Ok(code) = QrCode::new(data.as_bytes()) else {
+        return rsx! {};
+    };
+
+    let width = code.width();
+    let cells: Vec<bool> = code
+        .into_colors()
+        .into_iter()
+        .map(|c| c == Color::Dark)
+        .collect();
+
+    // Each module is 7 px; 14 px quiet-zone margin on every side.
+    let cell: usize = 7;
+    let margin: usize = 14;
+    let total = width * cell + 2 * margin;
+
+    // Collect dark-cell (col, row) pairs up-front so the iterator is
+    // a plain Vec — trivial for the RSX map to consume.
+    let dark: Vec<(usize, usize)> = cells
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &d)| d.then_some((i % width, i / width)))
+        .collect();
+
+    rsx! {
+        svg {
+            width: "{total}",
+            height: "{total}",
+            style: "background:white;border-radius:10px;display:block;",
+            rect { x: "0", y: "0", width: "{total}", height: "{total}", fill: "white" }
+            {dark.into_iter().map(|(cx, cy)| {
+                let x = cx * cell + margin;
+                let y = cy * cell + margin;
+                rsx! {
+                    rect {
+                        key: "{cx}-{cy}",
+                        x: "{x}",
+                        y: "{y}",
+                        width: "{cell}",
+                        height: "{cell}",
+                        fill: "#0f172a",
+                    }
+                }
+            })}
         }
     }
 }

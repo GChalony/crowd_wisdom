@@ -503,6 +503,76 @@ input::placeholder {
     font-weight: 700;
 }
 
+/* ── Share / QR card ── */
+.share-card {
+    background: var(--card-bg);
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    min-width: 300px;
+    max-width: 420px;
+    width: 100%;
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+}
+
+.share-title {
+    font-weight: 700;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    align-self: flex-start;
+}
+
+.share-url-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 8px;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--card-border);
+}
+
+.share-url-text {
+    flex: 1;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: monospace;
+}
+
+.btn-copy {
+    padding: 0.3rem 0.65rem;
+    font-size: 0.78rem;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--card-border);
+    border-radius: 6px;
+    color: white;
+    cursor: pointer;
+    white-space: nowrap;
+    font-family: "Nunito", sans-serif;
+    font-weight: 700;
+    flex-shrink: 0;
+    transition: background 0.15s ease;
+}
+
+.btn-copy:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: none;
+    box-shadow: none;
+}
+
+.btn-copy:active {
+    transform: none;
+}
+
 .btn-start {
     padding: 1rem 2.5rem;
     font-size: 1.1rem;

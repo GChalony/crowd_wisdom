@@ -98,7 +98,7 @@ pub fn JoinGame() -> Element {
                     text_decoration: "none",
                     color: "inherit",
                     gap: "6px",
-                    to: Route::Play {
+                    to: Route::Lobby {
                         quizz_id: game_id.read().parse().unwrap_or(0),
                     },
                     Icon { icon: FaPeopleGroup }
