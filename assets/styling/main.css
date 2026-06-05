@@ -503,6 +503,148 @@ input::placeholder {
     font-weight: 700;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   PLAY PAGE — REVEAL PANELS
+═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Correct / average side-by-side grid ── */
+.reveal-answers-grid {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--card-border);
+    padding: 1rem 0.5rem;
+    margin-bottom: 1.25rem;
+    width: 100%;
+}
+
+.reveal-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+}
+
+.reveal-divider {
+    width: 1px;
+    height: 48px;
+    background: rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
+}
+
+.reveal-label {
+    font-size: 0.75rem;
+    color: rgba(241, 245, 249, 0.45);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+}
+
+.reveal-value {
+    font-size: 1.9rem;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.reveal-value.correct {
+    background: linear-gradient(135deg, #34d399, #059669);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.reveal-value.crowd {
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.reveal-sublabel {
+    font-size: 0.72rem;
+    color: rgba(241, 245, 249, 0.5);
+    font-weight: 600;
+}
+
+/* ── Individual answers panel ── */
+.answers-panel {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.18);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--card-border);
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    text-align: left;
+}
+
+.answers-heading {
+    font-size: 0.78rem;
+    color: rgba(241, 245, 249, 0.45);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    margin-bottom: 0.6rem;
+}
+
+.answers-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.answer-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.5rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    transition: background 0.1s ease;
+}
+
+.answer-row.me {
+    background: rgba(59, 130, 246, 0.12);
+    border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.answer-name {
+    flex: 1;
+    color: rgba(241, 245, 249, 0.85);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.answer-row.me .answer-name {
+    font-weight: 700;
+    color: #93c5fd;
+}
+
+.answer-value-cell {
+    font-weight: 700;
+    color: white;
+    min-width: 3rem;
+    text-align: right;
+}
+
+.answer-delta {
+    font-size: 0.78rem;
+    color: rgba(241, 245, 249, 0.35);
+    min-width: 3.5rem;
+    text-align: right;
+}
+
+.answer-delta.best {
+    color: #34d399;
+    font-weight: 700;
+}
+
 /* ── Share / QR card ── */
 .share-card {
     background: var(--card-bg);

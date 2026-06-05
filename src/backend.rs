@@ -8,8 +8,6 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[cfg(feature = "server")]
-use std::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(feature = "server")]
 use std::{collections::HashMap, sync::Arc};
 #[cfg(feature = "server")]
 use tokio::sync::{watch, Mutex};
@@ -45,6 +43,7 @@ thread_local! {
             CREATE TABLE IF NOT EXISTS answer (
                 id INTEGER PRIMARY KEY,
                 question_id INTEGER,
+                user_name TEXT NOT NULL DEFAULT '',
                 value INTEGER,
                 FOREIGN KEY (question_id)
                     REFERENCES question (id)
@@ -70,6 +69,13 @@ pub struct User {
     pub is_admin: bool,
 }
 
+/// One player's submitted answer, included in the Revealed phase broadcast.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct IndividualAnswer {
+    pub name: String,
+    pub value: i32,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum LobbyUpdate {
     Players(Vec<User>),
@@ -79,7 +85,16 @@ pub enum LobbyUpdate {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum PlayPhase {
     Answering,
-    Revealed { correct_answer: i32 },
+    Revealed {
+        correct_answer: i32,
+        /// Every answer submitted before the admin clicked Reveal, sorted by
+        /// distance to the correct answer (closest first).
+        answers: Vec<IndividualAnswer>,
+        /// Mean of all submitted values.
+        average: f64,
+    },
+    /// Broadcast by the admin after the last question. All clients navigate home.
+    Finished,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -108,7 +123,9 @@ struct LobbyChannels {
 #[cfg(feature = "server")]
 struct GameChannels {
     creator_id: String,
-    answer_count: AtomicUsize,
+    /// In-memory answer buffer — source of truth for the active question.
+    /// Using RAM avoids any DB thread-local / timing issues.
+    answers: Mutex<Vec<IndividualAnswer>>,
     tx: watch::Sender<Option<PlayState>>,
     rx: watch::Receiver<Option<PlayState>>,
 }
@@ -153,7 +170,7 @@ impl AppState {
         let (tx, rx) = watch::channel(None);
         let game = Arc::new(GameChannels {
             creator_id,
-            answer_count: AtomicUsize::new(0),
+            answers: Mutex::new(vec![]),
             tx,
             rx,
         });
@@ -353,7 +370,7 @@ pub async fn admin_start_game(quizz_id: u32, user_id: String) -> Result<()> {
     };
 
     let game = STATE.get_or_create_game(quizz_id, creator_id).await;
-    game.answer_count.store(0, Ordering::Relaxed);
+    game.answers.lock().await.clear();
     let _ = game.tx.send(Some(play_state));
 
     if let Some(lobby) = STATE.get_lobby(quizz_id).await {
@@ -406,7 +423,12 @@ pub async fn get_play_state(
 }
 
 #[post("/api/answer")]
-pub async fn submit_answer(quizz_id: u32, position: u32, value: i32) -> Result<()> {
+pub async fn submit_answer(
+    quizz_id: u32,
+    position: u32,
+    value: i32,
+    user_name: String,
+) -> Result<()> {
     let game = match STATE.get_game(quizz_id).await {
         Some(g) => g,
         None => return Ok(()),
@@ -425,13 +447,24 @@ pub async fn submit_answer(quizz_id: u32, position: u32, value: i32) -> Result<(
         return Ok(());
     }
 
-    let new_count = game.answer_count.fetch_add(1, Ordering::Relaxed) + 1;
+    // 1. Push to the in-memory buffer — this is the source of truth for
+    //    admin_reveal, so it is never subject to a DB timing race.
+    let new_count = {
+        let mut guard = game.answers.lock().await;
+        guard.push(IndividualAnswer {
+            name: user_name.clone(),
+            value,
+        });
+        guard.len()
+    };
 
-    let mut new_state = state.clone();
+    // 2. Broadcast the updated count immediately.
+    let mut new_state = state;
     new_state.answer_count = new_count;
     let _ = game.tx.send(Some(new_state));
 
-    // Save answer to DB
+    // 3. Persist to DB (best-effort: a failure here is logged but never panics,
+    //    because the in-memory buffer is the source of truth).
     DB.with(|conn| {
         let question_id: i64 = conn
             .query_row(
@@ -444,11 +477,12 @@ pub async fn submit_answer(quizz_id: u32, position: u32, value: i32) -> Result<(
             .unwrap_or(-1);
 
         if question_id >= 0 {
-            conn.execute(
-                "INSERT INTO answer (question_id, value) VALUES (?1, ?2)",
-                (question_id, value),
-            )
-            .unwrap();
+            if let Err(e) = conn.execute(
+                "INSERT INTO answer (question_id, user_name, value) VALUES (?1, ?2, ?3)",
+                (question_id, user_name.as_str(), value),
+            ) {
+                tracing::warn!("Failed to persist answer to DB: {e}");
+            }
         }
     });
 
@@ -485,6 +519,7 @@ pub async fn admin_reveal(quizz_id: u32, user_id: String) -> Result<()> {
         return Ok(());
     }
 
+    // Correct answer comes from the DB (one synchronous read, no write — safe).
     let correct_answer: i32 = DB.with(|conn| {
         conn.query_row(
             "SELECT answer FROM question
@@ -496,8 +531,22 @@ pub async fn admin_reveal(quizz_id: u32, user_id: String) -> Result<()> {
         .unwrap_or(0)
     });
 
+    // Answers come from the in-memory buffer — no DB race possible.
+    let mut answers: Vec<IndividualAnswer> = game.answers.lock().await.clone();
+    answers.sort_by_key(|a| (a.value - correct_answer).abs());
+
+    let average: f64 = if answers.is_empty() {
+        0.0
+    } else {
+        answers.iter().map(|a| a.value as f64).sum::<f64>() / answers.len() as f64
+    };
+
     let mut new_state = state.clone();
-    new_state.phase = PlayPhase::Revealed { correct_answer };
+    new_state.phase = PlayPhase::Revealed {
+        correct_answer,
+        answers,
+        average,
+    };
     let _ = game.tx.send(Some(new_state));
 
     Ok(())
@@ -545,7 +594,7 @@ pub async fn admin_next(quizz_id: u32, user_id: String) -> Result<()> {
         .unwrap_or_default()
     });
 
-    game.answer_count.store(0, Ordering::Relaxed);
+    game.answers.lock().await.clear();
 
     let new_state = PlayState {
         position: next_position,
@@ -555,6 +604,43 @@ pub async fn admin_next(quizz_id: u32, user_id: String) -> Result<()> {
         phase: PlayPhase::Answering,
     };
     let _ = game.tx.send(Some(new_state));
+
+    Ok(())
+}
+
+/// Admin ends the quiz. Broadcasts `PlayPhase::Finished` to every connected
+/// play-page client, which causes them to navigate back to the home page.
+#[post("/api/finish")]
+pub async fn admin_finish(quizz_id: u32, user_id: String) -> Result<()> {
+    let creator_id: String = DB.with(|conn| {
+        conn.query_row(
+            "SELECT creator_id FROM quizz WHERE public_id = ?1",
+            [quizz_id],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_default()
+    });
+
+    if user_id != creator_id {
+        return Ok(());
+    }
+
+    let game = match STATE.get_game(quizz_id).await {
+        Some(g) => g,
+        None => return Ok(()),
+    };
+
+    // Only valid from the Revealed phase of the last question.
+    let current = game.rx.borrow().clone();
+    if let Some(state) = current {
+        if matches!(state.phase, PlayPhase::Revealed { .. }) && state.position + 1 >= state.total {
+            let finished = PlayState {
+                phase: PlayPhase::Finished,
+                ..state
+            };
+            let _ = game.tx.send(Some(finished));
+        }
+    }
 
     Ok(())
 }
