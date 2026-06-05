@@ -1,9 +1,10 @@
 use dioxus::{fullstack::WebSocketOptions, logger::tracing, prelude::*};
 
-use crate::backend::{get_lobby_state, User};
+use crate::{
+    backend::{admin_start_game, get_lobby_state, LobbyUpdate, User},
+    Route,
+};
 
-/// Adjectives and animals used to build deterministic fake names from a UUID.
-/// 10 × 12 = 120 combinations — enough for a fun demo.
 const ADJECTIVES: [&str; 10] = [
     "Swift", "Brave", "Clever", "Wise", "Bold", "Quick", "Bright", "Calm", "Daring", "Eager",
 ];
@@ -14,37 +15,37 @@ const ANIMALS: [&str; 12] = [
 
 #[component]
 pub fn Lobby(quizz_id: u32) -> Element {
-    // Current player list received from the server via WebSocket.
     let mut players: Signal<Vec<User>> = use_signal(Vec::new);
-
-    // The local user's display name (set once we read localStorage).
     let mut my_name: Signal<String> = use_signal(String::new);
+    // Stored so the Start button can pass it to admin_start_game.
+    let mut my_user_id: Signal<String> = use_signal(String::new);
 
-    // use_effect runs only on the client (after hydration), which is exactly
-    // when we can access localStorage and open a WebSocket.
+    let is_me_admin = use_memo(move || {
+        let name = my_name.read();
+        !name.is_empty() && players.read().iter().any(|p| p.is_admin && p.name == *name)
+    });
+
+    let navigator = use_navigator();
+
     use_effect(move || {
         spawn(async move {
-            // -----------------------------------------------------------------
-            // Step 1 – get or create the user's identity in localStorage.
-            // -----------------------------------------------------------------
-            // We derive the fake name deterministically from the UUID so the
-            // user always gets the same name on the same device without needing
-            // an account.
+            // ── Step 1: identity ──────────────────────────────────────────────
             let script = format!(
                 r#"
                 let id = localStorage.getItem('crowd_wisdom_user_id');
                 if (!id) {{
                     id = crypto.randomUUID();
                     localStorage.setItem('crowd_wisdom_user_id', id);
-                    // Clear any stale name so it regenerates below.
                     localStorage.removeItem('crowd_wisdom_user_name');
                 }}
                 let name = localStorage.getItem('crowd_wisdom_user_name');
                 if (!name) {{
+                    const hex  = id.replace(/-/g, '');
                     const adj  = [{adj}];
                     const ani  = [{ani}];
-                    const h    = parseInt(id.replace(/-/g, '').slice(0, 8), 16);
-                    name = adj[h % adj.length] + ani[Math.floor(h / adj.length) % ani.length];
+                    const h1   = parseInt(hex.slice(0, 8),  16);
+                    const h2   = parseInt(hex.slice(8, 16), 16);
+                    name = adj[h1 % adj.length] + ani[h2 % ani.length];
                     localStorage.setItem('crowd_wisdom_user_name', name);
                 }}
                 dioxus.send({{ id, name }});
@@ -62,22 +63,27 @@ pub fn Lobby(quizz_id: u32) -> Element {
             );
 
             let mut eval = document::eval(&script);
-
             let Ok(val) = eval.recv::<serde_json::Value>().await else {
                 tracing::error!("Failed to receive user identity from localStorage");
                 return;
             };
 
+            let user_id = val["id"].as_str().unwrap_or("").to_string();
             let name = val["name"].as_str().unwrap_or("Player").to_string();
             my_name.set(name.clone());
+            my_user_id.set(user_id.clone());
 
-            // -----------------------------------------------------------------
-            // Step 2 – open the lobby WebSocket and stream player updates.
-            // -----------------------------------------------------------------
-            match get_lobby_state(quizz_id, name, WebSocketOptions::new()).await {
+            // ── Step 2: lobby WebSocket ───────────────────────────────────────
+            match get_lobby_state(quizz_id, user_id, name, WebSocketOptions::new()).await {
                 Ok(ws) => {
-                    while let Ok(users) = ws.recv().await {
-                        players.set(users);
+                    while let Ok(update) = ws.recv().await {
+                        match update {
+                            LobbyUpdate::Players(users) => players.set(users),
+                            LobbyUpdate::GameStarted => {
+                                navigator.push(Route::Play { quizz_id });
+                                break;
+                            }
+                        }
                     }
                 }
                 Err(e) => tracing::error!("Lobby WebSocket error: {e:?}"),
@@ -85,24 +91,24 @@ pub fn Lobby(quizz_id: u32) -> Element {
         });
     });
 
-    let name_snapshot = my_name.read().clone();
-
     rsx! {
-        div { display: "flex", flex_direction: "column", align_items: "center",
-            padding: "2rem", gap: "1.5rem",
+        div {
+            display: "flex",
+            flex_direction: "column",
+            align_items: "center",
+            padding: "2rem",
+            gap: "1.5rem",
 
             h2 { font_size: "1.8rem", "Lobby #{quizz_id}" }
 
-            // Player list
+            // ── Player list ──────────────────────────────────────────────────
             div {
                 background: "rgba(255,255,255,0.06)",
                 border_radius: "16px",
                 padding: "1.5rem 2rem",
                 min_width: "260px",
 
-                h3 { margin_bottom: "1rem",
-                    "Players ({players.read().len()})"
-                }
+                h3 { margin_bottom: "1rem", "Players ({players.read().len()})" }
 
                 if players.read().is_empty() {
                     p { color: "rgba(255,255,255,0.5)", "Waiting for others to join…" }
@@ -116,20 +122,41 @@ pub fn Lobby(quizz_id: u32) -> Element {
                         gap: "0.5rem",
                         padding: "0.4rem 0",
 
-                        if player.name == name_snapshot {
-                            span { "⭐" }
-                            span { font_weight: "700", "{player.name}" }
-                            span { color: "rgba(255,255,255,0.4)", font_size: "0.85rem", "(you)" }
-                        } else {
-                            span { "👤" }
-                            span { "{player.name}" }
+                        span { if player.is_admin { "👑" } else { "👤" } }
+                        span {
+                            font_weight: if player.name == *my_name.read() { "700" } else { "400" },
+                            "{player.name}"
+                        }
+                        if player.name == *my_name.read() {
+                            span { color: "rgba(255,255,255,0.4)", font_size: "0.8rem", "(you)" }
+                        }
+                        if player.is_admin {
+                            span { color: "#facc15", font_size: "0.8rem", "admin" }
                         }
                     }
                 }
             }
 
-            button { font_size: "1rem", padding: "0.8rem 2rem",
-                "Start"
+            // ── Start button — admin only ────────────────────────────────────
+            // Clicking calls admin_start_game; the server broadcasts GameStarted
+            // to all lobby WebSocket connections, which navigate everyone to /play.
+            if is_me_admin() {
+                button {
+                    font_size: "1rem",
+                    padding: "0.8rem 2rem",
+                    background: "linear-gradient(135deg, #3b82f6, #8b5cf6)",
+                    border: "none",
+                    border_radius: "12px",
+                    color: "white",
+                    cursor: "pointer",
+                    onclick: move |_| {
+                        let uid = my_user_id();
+                        async move {
+                            admin_start_game(quizz_id, uid).await.ok();
+                        }
+                    },
+                    "▶ Start Quiz"
+                }
             }
         }
     }

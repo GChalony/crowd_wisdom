@@ -1,8 +1,15 @@
 use dioxus::{core::ElementId, html::div, logger::tracing, prelude::*};
-use dioxus_free_icons::{Icon, icons::fa_solid_icons::{FaPlus, FaTrash}};
+use dioxus_free_icons::{
+    icons::fa_solid_icons::{FaPlus, FaTrash},
+    Icon,
+};
 
-use crate::{Route, backend::create_quizz, views::home::{Column, Row}};
-use crate::backend::{Quizz, Question};
+use crate::backend::{Question, Quizz};
+use crate::{
+    backend::create_quizz,
+    views::home::{Column, Row},
+    Route,
+};
 
 #[component]
 pub fn CreateQuizz() -> Element {
@@ -118,7 +125,6 @@ pub fn NewQuestion(on_add: EventHandler<Question>) -> Element {
     }
 }
 
-
 #[component]
 fn Divider() -> Element {
     rsx! {
@@ -141,9 +147,19 @@ fn Create(quizz: Signal<Quizz>) -> Element {
                     cursor: pointer;
                 ",
             onclick: move |_| {
-                tracing::info!("Creating quizz");
                 async move {
-                    let quizz_id = create_quizz(quizz.read().clone()).await.unwrap();
+                    // Grab (or create) the user's persistent UUID from localStorage.
+                    // This runs after hydration so browser APIs are available.
+                    let mut eval = document::eval(
+                        r#"let id = localStorage.getItem('crowd_wisdom_user_id');
+                        if (!id) {
+                            id = crypto.randomUUID();
+                            localStorage.setItem('crowd_wisdom_user_id', id);
+                        }
+                        dioxus.send(id);"#,
+                    );
+                    let creator_id = eval.recv::<String>().await.unwrap_or_default();
+                    let quizz_id = create_quizz(quizz.read().clone(), creator_id).await.unwrap();
                     navigator.push(Route::Lobby { quizz_id });
                 }
             },

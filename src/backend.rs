@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[cfg(feature = "server")]
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(feature = "server")]
 use std::{collections::HashMap, sync::Arc};
 #[cfg(feature = "server")]
 use tokio::sync::{watch, Mutex};
@@ -26,6 +28,7 @@ thread_local! {
             CREATE TABLE IF NOT EXISTS quizz (
                 id INTEGER PRIMARY KEY,
                 public_id INTEGER NOT NULL UNIQUE,
+                creator_id TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS question (
@@ -64,6 +67,28 @@ thread_local! {
 pub struct User {
     pub id: Uuid,
     pub name: String,
+    pub is_admin: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum LobbyUpdate {
+    Players(Vec<User>),
+    GameStarted,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum PlayPhase {
+    Answering,
+    Revealed { correct_answer: i32 },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct PlayState {
+    pub position: u32,
+    pub total: u32,
+    pub question: String,
+    pub answer_count: usize,
+    pub phase: PlayPhase,
 }
 
 // ---------------------------------------------------------------------------
@@ -73,30 +98,40 @@ pub struct User {
 /// Per-quizz broadcast channel + current user list.
 #[cfg(feature = "server")]
 struct LobbyChannels {
+    /// Stored UUID string of the quiz creator; used to set `is_admin` on join.
+    creator_id: String,
     users: Mutex<Vec<User>>,
-    tx: watch::Sender<Vec<User>>,
-    rx: watch::Receiver<Vec<User>>,
+    tx: watch::Sender<LobbyUpdate>,
+    rx: watch::Receiver<LobbyUpdate>,
+}
+
+#[cfg(feature = "server")]
+struct GameChannels {
+    creator_id: String,
+    answer_count: AtomicUsize,
+    tx: watch::Sender<Option<PlayState>>,
+    rx: watch::Receiver<Option<PlayState>>,
 }
 
 #[cfg(feature = "server")]
 #[derive(Clone)]
 struct AppState {
-    /// For the existing answer-count WebSocket.
-    count_tx: watch::Sender<usize>,
-    count_rx: watch::Receiver<usize>,
     /// One entry per active quizz lobby.
     lobbies: Arc<Mutex<HashMap<u32, Arc<LobbyChannels>>>>,
+    /// One entry per active game.
+    games: Arc<Mutex<HashMap<u32, Arc<GameChannels>>>>,
 }
 
 #[cfg(feature = "server")]
 impl AppState {
-    async fn get_or_create_lobby(&self, quizz_id: u32) -> Arc<LobbyChannels> {
+    async fn get_or_create_lobby(&self, quizz_id: u32, creator_id: String) -> Arc<LobbyChannels> {
         let mut lobbies = self.lobbies.lock().await;
         if let Some(lobby) = lobbies.get(&quizz_id) {
             return lobby.clone();
         }
-        let (tx, rx) = watch::channel(vec![]);
+        let (tx, rx) = watch::channel(LobbyUpdate::Players(vec![]));
         let lobby = Arc::new(LobbyChannels {
+            creator_id,
             users: Mutex::new(vec![]),
             tx,
             rx,
@@ -104,15 +139,39 @@ impl AppState {
         lobbies.insert(quizz_id, lobby.clone());
         lobby
     }
+
+    async fn get_lobby(&self, quizz_id: u32) -> Option<Arc<LobbyChannels>> {
+        let lobbies = self.lobbies.lock().await;
+        lobbies.get(&quizz_id).cloned()
+    }
+
+    async fn get_or_create_game(&self, quizz_id: u32, creator_id: String) -> Arc<GameChannels> {
+        let mut games = self.games.lock().await;
+        if let Some(game) = games.get(&quizz_id) {
+            return game.clone();
+        }
+        let (tx, rx) = watch::channel(None);
+        let game = Arc::new(GameChannels {
+            creator_id,
+            answer_count: AtomicUsize::new(0),
+            tx,
+            rx,
+        });
+        games.insert(quizz_id, game.clone());
+        game
+    }
+
+    async fn get_game(&self, quizz_id: u32) -> Option<Arc<GameChannels>> {
+        let games = self.games.lock().await;
+        games.get(&quizz_id).cloned()
+    }
 }
 
 #[cfg(feature = "server")]
 static STATE: Lazy<AppState> = Lazy::new(|| async move {
-    let (count_tx, count_rx) = watch::channel(0usize);
     dioxus::Ok(AppState {
-        count_tx,
-        count_rx,
         lobbies: Arc::new(Mutex::new(HashMap::new())),
+        games: Arc::new(Mutex::new(HashMap::new())),
     })
 });
 
@@ -142,12 +201,15 @@ impl Quizz {
 // ---------------------------------------------------------------------------
 
 #[post("/create")]
-pub async fn create_quizz(quizz: Quizz) -> Result<u32> {
+pub async fn create_quizz(quizz: Quizz, creator_id: String) -> Result<u32> {
     tracing::info!("Creating quizz {quizz:?}");
     DB.with(|mut conn| {
         let tx = conn.unchecked_transaction()?;
         let public_id: u32 = rand::random_range(1000..9999);
-        tx.execute("INSERT INTO quizz (public_id) VALUES (?1)", (public_id,))?;
+        tx.execute(
+            "INSERT INTO quizz (public_id, creator_id) VALUES (?1, ?2)",
+            (public_id, &creator_id),
+        )?;
         let quizz_id = tx.last_insert_rowid();
 
         for (i, question) in quizz.questions.into_iter().enumerate() {
@@ -164,20 +226,26 @@ pub async fn create_quizz(quizz: Quizz) -> Result<u32> {
 }
 
 /// WebSocket endpoint for the lobby.
-///
-/// The client connects with `quizz_id` (path) and `user_name` (path).
-/// The server assigns a fresh UUID to the connection, adds the user to the
-/// lobby broadcast, streams `Vec<User>` on every change, and removes the
-/// user when the socket is closed.
-#[get("/api/lobby/:quizz_id/:user_name")]
+#[get("/api/lobby/:quizz_id/:user_id/:user_name")]
 pub async fn get_lobby_state(
     quizz_id: u32,
+    user_id: String,
     user_name: String,
     options: WebSocketOptions,
-) -> Result<Websocket<String, Vec<User>>> {
-    // Each connection gets its own UUID so cleanup is unambiguous.
+) -> Result<Websocket<String, LobbyUpdate>> {
+    // Synchronous DB lookup — no await yet, so thread_local DB is safe.
+    let creator_id: String = DB.with(|conn| {
+        conn.query_row(
+            "SELECT creator_id FROM quizz WHERE public_id = ?1",
+            [quizz_id],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_default()
+    });
+
+    let is_admin = user_id == creator_id;
     let connection_id = Uuid::new_v4();
-    let lobby = STATE.get_or_create_lobby(quizz_id).await;
+    let lobby = STATE.get_or_create_lobby(quizz_id, creator_id).await;
 
     Ok(options.on_upgrade(move |mut socket| async move {
         // --- register user ---
@@ -186,23 +254,28 @@ pub async fn get_lobby_state(
             users.push(User {
                 id: connection_id,
                 name: user_name,
+                is_admin,
             });
-            let _ = lobby.tx.send(users.clone());
+            let _ = lobby.tx.send(LobbyUpdate::Players(users.clone()));
         }
 
         let mut rx = lobby.rx.clone();
+        let mut game_started = false;
 
-        // Send current state immediately (mark as seen so `changed()` only
-        // fires on genuinely new updates).
+        // Send current state immediately
         let initial = rx.borrow_and_update().clone();
         if socket.send(initial).await.is_ok() {
-            // Stream all future updates until the socket dies.
             loop {
                 match rx.changed().await {
                     Err(_) => break,
                     Ok(()) => {
-                        let users = rx.borrow_and_update().clone();
-                        if socket.send(users).await.is_err() {
+                        let update = rx.borrow_and_update().clone();
+                        let is_game_started = update == LobbyUpdate::GameStarted;
+                        if socket.send(update).await.is_err() {
+                            break;
+                        }
+                        if is_game_started {
+                            game_started = true;
                             break;
                         }
                     }
@@ -210,63 +283,278 @@ pub async fn get_lobby_state(
             }
         }
 
-        // --- remove user on disconnect ---
-        let mut users = lobby.users.lock().await;
-        users.retain(|u| u.id != connection_id);
-        let _ = lobby.tx.send(users.clone());
+        // --- remove user on disconnect (only if game hasn't started) ---
+        if !game_started {
+            let mut users = lobby.users.lock().await;
+            users.retain(|u| u.id != connection_id);
+            let _ = lobby.tx.send(LobbyUpdate::Players(users.clone()));
+        }
     }))
 }
 
-#[post("/question/:question_id")]
-pub async fn send_answer(question_id: u32, answer: i32) -> Result<()> {
-    tracing::info!("Sent answer {}", answer);
-    DB.with(|con| {
-        con.execute(
-            "INSERT INTO answer (question_id, value) VALUES (?1, ?2)",
-            (question_id, answer),
+#[get("/api/is_admin/:quizz_id/:user_id")]
+pub async fn check_is_admin(quizz_id: u32, user_id: String) -> Result<bool> {
+    let creator_id: String = DB.with(|conn| {
+        conn.query_row(
+            "SELECT creator_id FROM quizz WHERE public_id = ?1",
+            [quizz_id],
+            |row| row.get::<_, String>(0),
         )
-        .unwrap()
+        .unwrap_or_default()
     });
-    // TODO emit number of answers to all websockets
+    Ok(user_id == creator_id)
+}
+
+#[post("/api/start")]
+pub async fn admin_start_game(quizz_id: u32, user_id: String) -> Result<()> {
+    let creator_id: String = DB.with(|conn| {
+        conn.query_row(
+            "SELECT creator_id FROM quizz WHERE public_id = ?1",
+            [quizz_id],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_default()
+    });
+
+    if user_id != creator_id {
+        return Ok(());
+    }
+
+    let (question, total): (String, u32) = DB.with(|conn| {
+        let question: String = conn
+            .query_row(
+                "SELECT text FROM question
+                 JOIN quizz ON question.quizz_id = quizz.id
+                 WHERE quizz.public_id = ?1 AND question.position = 0",
+                [quizz_id],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_default();
+
+        let total: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM question
+                 JOIN quizz ON question.quizz_id = quizz.id
+                 WHERE quizz.public_id = ?1",
+                [quizz_id],
+                |row| row.get::<_, u32>(0),
+            )
+            .unwrap_or(0);
+
+        (question, total)
+    });
+
+    let play_state = PlayState {
+        position: 0,
+        total,
+        question,
+        answer_count: 0,
+        phase: PlayPhase::Answering,
+    };
+
+    let game = STATE.get_or_create_game(quizz_id, creator_id).await;
+    game.answer_count.store(0, Ordering::Relaxed);
+    let _ = game.tx.send(Some(play_state));
+
+    if let Some(lobby) = STATE.get_lobby(quizz_id).await {
+        let _ = lobby.tx.send(LobbyUpdate::GameStarted);
+    }
+
     Ok(())
 }
 
-#[get("/question/:quizz_id/:position")]
-pub async fn get_question(quizz_id: u32, position: u32) -> Result<String> {
-    let res: String = DB.with(|conn| {
-        conn.prepare(
-            "SELECT text FROM quizz
-             JOIN question ON question.quizz_id = quizz.id
-             WHERE public_id == (?1)",
-        )
-        .unwrap()
-        .query([quizz_id])
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .get(0)
-        .unwrap()
-    });
-    Ok(res)
-}
-
-#[get("/api/get_count/{question_id}")]
-pub async fn get_count(
-    question_id: u16,
+#[get("/api/play/:quizz_id")]
+pub async fn get_play_state(
+    quizz_id: u32,
     options: WebSocketOptions,
-) -> Result<Websocket<usize, usize>> {
-    tracing::info!("Creating websocket");
+) -> Result<Websocket<String, PlayState>> {
+    let creator_id: String = DB.with(|conn| {
+        conn.query_row(
+            "SELECT creator_id FROM quizz WHERE public_id = ?1",
+            [quizz_id],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_default()
+    });
+
+    let game = STATE.get_or_create_game(quizz_id, creator_id).await;
 
     Ok(options.on_upgrade(move |mut socket| async move {
-        let mut rx = STATE.count_rx.clone();
-        let current_count = *rx.borrow();
-        socket.send(current_count).await.unwrap();
+        let mut rx = game.rx.clone();
+
+        let initial = rx.borrow_and_update().clone();
+        if let Some(state) = initial {
+            if socket.send(state).await.is_err() {
+                return;
+            }
+        }
 
         loop {
-            rx.changed().await.unwrap();
-            let count = *rx.borrow();
-            _ = socket.send(count).await;
+            match rx.changed().await {
+                Err(_) => break,
+                Ok(()) => {
+                    let update = rx.borrow_and_update().clone();
+                    if let Some(state) = update {
+                        if socket.send(state).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }))
+}
+
+#[post("/api/answer")]
+pub async fn submit_answer(quizz_id: u32, position: u32, value: i32) -> Result<()> {
+    let game = match STATE.get_game(quizz_id).await {
+        Some(g) => g,
+        None => return Ok(()),
+    };
+
+    let current_state = game.rx.borrow().clone();
+    let state = match current_state {
+        None => return Ok(()),
+        Some(s) => s,
+    };
+
+    if state.position != position {
+        return Ok(());
+    }
+    if matches!(state.phase, PlayPhase::Revealed { .. }) {
+        return Ok(());
+    }
+
+    let new_count = game.answer_count.fetch_add(1, Ordering::Relaxed) + 1;
+
+    let mut new_state = state.clone();
+    new_state.answer_count = new_count;
+    let _ = game.tx.send(Some(new_state));
+
+    // Save answer to DB
+    DB.with(|conn| {
+        let question_id: i64 = conn
+            .query_row(
+                "SELECT question.id FROM question
+                 JOIN quizz ON question.quizz_id = quizz.id
+                 WHERE quizz.public_id = ?1 AND question.position = ?2",
+                (quizz_id, position),
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(-1);
+
+        if question_id >= 0 {
+            conn.execute(
+                "INSERT INTO answer (question_id, value) VALUES (?1, ?2)",
+                (question_id, value),
+            )
+            .unwrap();
+        }
+    });
+
+    Ok(())
+}
+
+#[post("/api/reveal")]
+pub async fn admin_reveal(quizz_id: u32, user_id: String) -> Result<()> {
+    let creator_id: String = DB.with(|conn| {
+        conn.query_row(
+            "SELECT creator_id FROM quizz WHERE public_id = ?1",
+            [quizz_id],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_default()
+    });
+
+    if user_id != creator_id {
+        return Ok(());
+    }
+
+    let game = match STATE.get_game(quizz_id).await {
+        Some(g) => g,
+        None => return Ok(()),
+    };
+
+    let current_state = game.rx.borrow().clone();
+    let state = match current_state {
+        None => return Ok(()),
+        Some(s) => s,
+    };
+
+    if matches!(state.phase, PlayPhase::Revealed { .. }) {
+        return Ok(());
+    }
+
+    let correct_answer: i32 = DB.with(|conn| {
+        conn.query_row(
+            "SELECT answer FROM question
+             JOIN quizz ON question.quizz_id = quizz.id
+             WHERE quizz.public_id = ?1 AND question.position = ?2",
+            (quizz_id, state.position),
+            |row| row.get::<_, i32>(0),
+        )
+        .unwrap_or(0)
+    });
+
+    let mut new_state = state.clone();
+    new_state.phase = PlayPhase::Revealed { correct_answer };
+    let _ = game.tx.send(Some(new_state));
+
+    Ok(())
+}
+
+#[post("/api/next")]
+pub async fn admin_next(quizz_id: u32, user_id: String) -> Result<()> {
+    let creator_id: String = DB.with(|conn| {
+        conn.query_row(
+            "SELECT creator_id FROM quizz WHERE public_id = ?1",
+            [quizz_id],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_default()
+    });
+
+    if user_id != creator_id {
+        return Ok(());
+    }
+
+    let game = match STATE.get_game(quizz_id).await {
+        Some(g) => g,
+        None => return Ok(()),
+    };
+
+    let current_state = game.rx.borrow().clone();
+    let state = match current_state {
+        None => return Ok(()),
+        Some(s) => s,
+    };
+
+    if state.position + 1 >= state.total {
+        return Ok(());
+    }
+
+    let next_position = state.position + 1;
+    let next_question: String = DB.with(|conn| {
+        conn.query_row(
+            "SELECT text FROM question
+             JOIN quizz ON question.quizz_id = quizz.id
+             WHERE quizz.public_id = ?1 AND question.position = ?2",
+            (quizz_id, next_position),
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_default()
+    });
+
+    game.answer_count.store(0, Ordering::Relaxed);
+
+    let new_state = PlayState {
+        position: next_position,
+        total: state.total,
+        question: next_question,
+        answer_count: 0,
+        phase: PlayPhase::Answering,
+    };
+    let _ = game.tx.send(Some(new_state));
+
+    Ok(())
 }
