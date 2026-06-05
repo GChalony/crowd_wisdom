@@ -32,11 +32,22 @@ thread_local! {
             CREATE TABLE IF NOT EXISTS question (
                 id INTEGER PRIMARY KEY,
                 quizz_id INTEGER,
+                kind TEXT NOT NULL DEFAULT 'numeric',
                 text TEXT NOT NULL,
                 answer INTEGER,
                 position INTEGER NOT NULL,
                 FOREIGN KEY (quizz_id)
                     REFERENCES quizz (id)
+                        ON DELETE CASCADE
+                        ON UPDATE NO ACTION
+            );
+            CREATE TABLE IF NOT EXISTS choice (
+                id INTEGER PRIMARY KEY,
+                question_id INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                FOREIGN KEY (question_id)
+                    REFERENCES question (id)
                         ON DELETE CASCADE
                         ON UPDATE NO ACTION
             );
@@ -76,6 +87,29 @@ pub struct IndividualAnswer {
     pub value: i32,
 }
 
+/// How a question is answered. New variants can be added without DB migration
+/// (the `kind` column is a freetext tag).
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+pub enum QuestionKind {
+    #[default]
+    Numeric,
+    /// Multiple-choice: `options` are the displayed labels; `answer` in the DB
+    /// stores the 0-based index of the correct option.
+    Choice { options: Vec<String> },
+}
+
+/// Crowd-aggregated result, produced at reveal time and broadcast to all clients.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum CrowdResult {
+    /// Mean of all numeric submissions.
+    Mean { average: f64 },
+    /// Per-option vote counts; `winners` contains all tied top-vote indices.
+    Votes {
+        counts: Vec<usize>,
+        winners: Vec<usize>,
+    },
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum LobbyUpdate {
     Players(Vec<User>),
@@ -87,11 +121,8 @@ pub enum PlayPhase {
     Answering,
     Revealed {
         correct_answer: i32,
-        /// Every answer submitted before the admin clicked Reveal, sorted by
-        /// distance to the correct answer (closest first).
         answers: Vec<IndividualAnswer>,
-        /// Mean of all submitted values.
-        average: f64,
+        crowd_result: CrowdResult,
     },
     /// Broadcast by the admin after the last question. All clients navigate home.
     Finished,
@@ -102,6 +133,7 @@ pub struct PlayState {
     pub position: u32,
     pub total: u32,
     pub question: String,
+    pub kind: QuestionKind,
     pub answer_count: usize,
     pub phase: PlayPhase,
 }
@@ -200,6 +232,7 @@ static STATE: Lazy<AppState> = Lazy::new(|| async move {
 pub struct Question {
     pub question: String,
     pub answer: i32,
+    pub kind: QuestionKind,
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -217,10 +250,44 @@ impl Quizz {
 // Server functions
 // ---------------------------------------------------------------------------
 
+/// Load question text, kind (with choices), and DB row id for a given
+/// quizz public_id + position. Returns None if the question doesn't exist.
+#[cfg(feature = "server")]
+fn load_question_data(
+    conn: &rusqlite::Connection,
+    quizz_public_id: u32,
+    position: u32,
+) -> Option<(String, QuestionKind, i64)> {
+    let (text, kind_tag, question_id): (String, String, i64) = conn
+        .query_row(
+            "SELECT text, kind, question.id FROM question
+             JOIN quizz ON question.quizz_id = quizz.id
+             WHERE quizz.public_id = ?1 AND question.position = ?2",
+            (quizz_public_id, position),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .ok()?;
+
+    let kind = if kind_tag == "choice" {
+        let options: Vec<String> = conn
+            .prepare("SELECT text FROM choice WHERE question_id = ?1 ORDER BY position")
+            .ok()?
+            .query_map([question_id], |row| row.get(0))
+            .ok()?
+            .filter_map(|r| r.ok())
+            .collect();
+        QuestionKind::Choice { options }
+    } else {
+        QuestionKind::Numeric
+    };
+
+    Some((text, kind, question_id))
+}
+
 #[post("/create")]
 pub async fn create_quizz(quizz: Quizz, creator_id: String) -> Result<u32> {
     tracing::info!("Creating quizz {quizz:?}");
-    DB.with(|mut conn| {
+    DB.with(|conn| {
         let tx = conn.unchecked_transaction()?;
         let public_id: u32 = rand::random_range(1000..9999);
         tx.execute(
@@ -231,10 +298,25 @@ pub async fn create_quizz(quizz: Quizz, creator_id: String) -> Result<u32> {
 
         for (i, question) in quizz.questions.into_iter().enumerate() {
             tx.execute(
-                "INSERT INTO question (quizz_id, text, answer, position) VALUES (?1, ?2, ?3, ?4)",
-                (quizz_id, question.question, question.answer, i),
-            )
-            .unwrap();
+                "INSERT INTO question (quizz_id, kind, text, answer, position) VALUES (?1, ?2, ?3, ?4, ?5)",
+                (
+                    quizz_id,
+                    match &question.kind { QuestionKind::Numeric => "numeric", QuestionKind::Choice { .. } => "choice" },
+                    &question.question,
+                    question.answer,
+                    i,
+                ),
+            ).unwrap();
+            let question_db_id = tx.last_insert_rowid();
+
+            if let QuestionKind::Choice { options } = &question.kind {
+                for (j, option) in options.iter().enumerate() {
+                    tx.execute(
+                        "INSERT INTO choice (question_id, text, position) VALUES (?1, ?2, ?3)",
+                        (question_db_id, option.as_str(), j),
+                    ).unwrap();
+                }
+            }
         }
         tx.commit().unwrap();
 
@@ -337,17 +419,8 @@ pub async fn admin_start_game(quizz_id: u32, user_id: String) -> Result<()> {
         return Ok(());
     }
 
-    let (question, total): (String, u32) = DB.with(|conn| {
-        let question: String = conn
-            .query_row(
-                "SELECT text FROM question
-                 JOIN quizz ON question.quizz_id = quizz.id
-                 WHERE quizz.public_id = ?1 AND question.position = 0",
-                [quizz_id],
-                |row| row.get::<_, String>(0),
-            )
-            .unwrap_or_default();
-
+    let (question_text, question_kind, total) = DB.with(|conn| {
+        let (text, kind, _) = load_question_data(conn, quizz_id, 0).unwrap_or_default();
         let total: u32 = conn
             .query_row(
                 "SELECT COUNT(*) FROM question
@@ -357,14 +430,14 @@ pub async fn admin_start_game(quizz_id: u32, user_id: String) -> Result<()> {
                 |row| row.get::<_, u32>(0),
             )
             .unwrap_or(0);
-
-        (question, total)
+        (text, kind, total)
     });
 
     let play_state = PlayState {
         position: 0,
         total,
-        question,
+        question: question_text,
+        kind: question_kind,
         answer_count: 0,
         phase: PlayPhase::Answering,
     };
@@ -532,20 +605,58 @@ pub async fn admin_reveal(quizz_id: u32, user_id: String) -> Result<()> {
     });
 
     // Answers come from the in-memory buffer — no DB race possible.
-    let mut answers: Vec<IndividualAnswer> = game.answers.lock().await.clone();
-    answers.sort_by_key(|a| (a.value - correct_answer).abs());
+    let answers: Vec<IndividualAnswer> = game.answers.lock().await.clone();
 
-    let average: f64 = if answers.is_empty() {
-        0.0
-    } else {
-        answers.iter().map(|a| a.value as f64).sum::<f64>() / answers.len() as f64
+    // Sort by distance to correct answer (for numeric; for choice, sort by value for consistency)
+    let mut sorted_answers = answers;
+    match &state.kind {
+        QuestionKind::Numeric => {
+            sorted_answers.sort_by_key(|a| (a.value - correct_answer).abs());
+        }
+        QuestionKind::Choice { .. } => {
+            sorted_answers.sort_by_key(|a| a.value);
+        }
+    }
+
+    let crowd_result = match &state.kind {
+        QuestionKind::Numeric => {
+            let average = if sorted_answers.is_empty() {
+                0.0
+            } else {
+                sorted_answers.iter().map(|a| a.value as f64).sum::<f64>()
+                    / sorted_answers.len() as f64
+            };
+            CrowdResult::Mean { average }
+        }
+        QuestionKind::Choice { options } => {
+            let n = options.len();
+            let mut counts = vec![0usize; n];
+            for a in &sorted_answers {
+                let idx = a.value as usize;
+                if idx < n {
+                    counts[idx] += 1;
+                }
+            }
+            let max_votes = counts.iter().max().copied().unwrap_or(0);
+            let winners: Vec<usize> = if max_votes == 0 {
+                vec![]
+            } else {
+                counts
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &c)| c == max_votes)
+                    .map(|(i, _)| i)
+                    .collect()
+            };
+            CrowdResult::Votes { counts, winners }
+        }
     };
 
     let mut new_state = state.clone();
     new_state.phase = PlayPhase::Revealed {
         correct_answer,
-        answers,
-        average,
+        answers: sorted_answers,
+        crowd_result,
     };
     let _ = game.tx.send(Some(new_state));
 
@@ -583,15 +694,10 @@ pub async fn admin_next(quizz_id: u32, user_id: String) -> Result<()> {
     }
 
     let next_position = state.position + 1;
-    let next_question: String = DB.with(|conn| {
-        conn.query_row(
-            "SELECT text FROM question
-             JOIN quizz ON question.quizz_id = quizz.id
-             WHERE quizz.public_id = ?1 AND question.position = ?2",
-            (quizz_id, next_position),
-            |row| row.get::<_, String>(0),
-        )
-        .unwrap_or_default()
+    let (next_question, next_kind) = DB.with(|conn| {
+        load_question_data(conn, quizz_id, next_position)
+            .map(|(text, kind, _)| (text, kind))
+            .unwrap_or_default()
     });
 
     game.answers.lock().await.clear();
@@ -600,6 +706,7 @@ pub async fn admin_next(quizz_id: u32, user_id: String) -> Result<()> {
         position: next_position,
         total: state.total,
         question: next_question,
+        kind: next_kind,
         answer_count: 0,
         phase: PlayPhase::Answering,
     };
