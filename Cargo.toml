@@ -14,6 +14,7 @@ rusqlite = { version = "0.32.1", optional = true }
 serde = "1.0.228"
 serde_json = "1.0.149"
 rand = { version = "0.10.1", optional = true }
+uuid = { version = "1.23.1", features = ["serde", "v4", "js"] }
 
 [features]
 default = ["web"]

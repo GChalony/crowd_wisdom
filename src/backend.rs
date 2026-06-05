@@ -5,11 +5,16 @@ use dioxus::{
     CapturedError,
 };
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[cfg(feature = "server")]
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 #[cfg(feature = "server")]
 use tokio::sync::{watch, Mutex};
+
+// ---------------------------------------------------------------------------
+// Database
+// ---------------------------------------------------------------------------
 
 #[cfg(feature = "server")]
 thread_local! {
@@ -50,20 +55,70 @@ thread_local! {
     };
 }
 
+// ---------------------------------------------------------------------------
+// Shared types (compiled on both client and server)
+// ---------------------------------------------------------------------------
+
+/// A connected lobby participant. Sent from the server to all clients.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct User {
+    pub id: Uuid,
+    pub name: String,
+}
+
+// ---------------------------------------------------------------------------
+// Server-only state
+// ---------------------------------------------------------------------------
+
+/// Per-quizz broadcast channel + current user list.
 #[cfg(feature = "server")]
-#[derive(Clone)]
-struct AppState {
-    answers: Arc<Mutex<Vec<i32>>>, // TODO : replace with DB
-    tx: watch::Sender<usize>,
-    rx: watch::Receiver<usize>,
+struct LobbyChannels {
+    users: Mutex<Vec<User>>,
+    tx: watch::Sender<Vec<User>>,
+    rx: watch::Receiver<Vec<User>>,
 }
 
 #[cfg(feature = "server")]
-static DATABASE: Lazy<AppState> = Lazy::new(|| async move {
-    let (tx, rx) = watch::channel(0usize);
-    let answers = Arc::new(Mutex::new(vec![]));
-    dioxus::Ok(AppState { answers, tx, rx })
+#[derive(Clone)]
+struct AppState {
+    /// For the existing answer-count WebSocket.
+    count_tx: watch::Sender<usize>,
+    count_rx: watch::Receiver<usize>,
+    /// One entry per active quizz lobby.
+    lobbies: Arc<Mutex<HashMap<u32, Arc<LobbyChannels>>>>,
+}
+
+#[cfg(feature = "server")]
+impl AppState {
+    async fn get_or_create_lobby(&self, quizz_id: u32) -> Arc<LobbyChannels> {
+        let mut lobbies = self.lobbies.lock().await;
+        if let Some(lobby) = lobbies.get(&quizz_id) {
+            return lobby.clone();
+        }
+        let (tx, rx) = watch::channel(vec![]);
+        let lobby = Arc::new(LobbyChannels {
+            users: Mutex::new(vec![]),
+            tx,
+            rx,
+        });
+        lobbies.insert(quizz_id, lobby.clone());
+        lobby
+    }
+}
+
+#[cfg(feature = "server")]
+static STATE: Lazy<AppState> = Lazy::new(|| async move {
+    let (count_tx, count_rx) = watch::channel(0usize);
+    dioxus::Ok(AppState {
+        count_tx,
+        count_rx,
+        lobbies: Arc::new(Mutex::new(HashMap::new())),
+    })
 });
+
+// ---------------------------------------------------------------------------
+// Quizz data types
+// ---------------------------------------------------------------------------
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct Question {
@@ -82,12 +137,15 @@ impl Quizz {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Server functions
+// ---------------------------------------------------------------------------
+
 #[post("/create")]
 pub async fn create_quizz(quizz: Quizz) -> Result<u32> {
     tracing::info!("Creating quizz {quizz:?}");
     DB.with(|mut conn| {
         let tx = conn.unchecked_transaction()?;
-        // Generate a 4-digit public id
         let public_id: u32 = rand::random_range(1000..9999);
         tx.execute("INSERT INTO quizz (public_id) VALUES (?1)", (public_id,))?;
         let quizz_id = tx.last_insert_rowid();
@@ -105,12 +163,63 @@ pub async fn create_quizz(quizz: Quizz) -> Result<u32> {
     })
 }
 
+/// WebSocket endpoint for the lobby.
+///
+/// The client connects with `quizz_id` (path) and `user_name` (path).
+/// The server assigns a fresh UUID to the connection, adds the user to the
+/// lobby broadcast, streams `Vec<User>` on every change, and removes the
+/// user when the socket is closed.
+#[get("/api/lobby/:quizz_id/:user_name")]
+pub async fn get_lobby_state(
+    quizz_id: u32,
+    user_name: String,
+    options: WebSocketOptions,
+) -> Result<Websocket<String, Vec<User>>> {
+    // Each connection gets its own UUID so cleanup is unambiguous.
+    let connection_id = Uuid::new_v4();
+    let lobby = STATE.get_or_create_lobby(quizz_id).await;
+
+    Ok(options.on_upgrade(move |mut socket| async move {
+        // --- register user ---
+        {
+            let mut users = lobby.users.lock().await;
+            users.push(User {
+                id: connection_id,
+                name: user_name,
+            });
+            let _ = lobby.tx.send(users.clone());
+        }
+
+        let mut rx = lobby.rx.clone();
+
+        // Send current state immediately (mark as seen so `changed()` only
+        // fires on genuinely new updates).
+        let initial = rx.borrow_and_update().clone();
+        if socket.send(initial).await.is_ok() {
+            // Stream all future updates until the socket dies.
+            loop {
+                match rx.changed().await {
+                    Err(_) => break,
+                    Ok(()) => {
+                        let users = rx.borrow_and_update().clone();
+                        if socket.send(users).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- remove user on disconnect ---
+        let mut users = lobby.users.lock().await;
+        users.retain(|u| u.id != connection_id);
+        let _ = lobby.tx.send(users.clone());
+    }))
+}
+
 #[post("/question/:question_id")]
 pub async fn send_answer(question_id: u32, answer: i32) -> Result<()> {
     tracing::info!("Sent answer {}", answer);
-    let mut answers = DATABASE.answers.lock().await;
-    answers.push(answer);
-    DATABASE.tx.send(answers.len()).unwrap();
     DB.with(|con| {
         con.execute(
             "INSERT INTO answer (question_id, value) VALUES (?1, ?2)",
@@ -118,6 +227,7 @@ pub async fn send_answer(question_id: u32, answer: i32) -> Result<()> {
         )
         .unwrap()
     });
+    // TODO emit number of answers to all websockets
     Ok(())
 }
 
@@ -125,7 +235,7 @@ pub async fn send_answer(question_id: u32, answer: i32) -> Result<()> {
 pub async fn get_question(quizz_id: u32, position: u32) -> Result<String> {
     let res: String = DB.with(|conn| {
         conn.prepare(
-            "SELECT text FROM quizz 
+            "SELECT text FROM quizz
              JOIN question ON question.quizz_id = quizz.id
              WHERE public_id == (?1)",
         )
@@ -149,7 +259,7 @@ pub async fn get_count(
     tracing::info!("Creating websocket");
 
     Ok(options.on_upgrade(move |mut socket| async move {
-        let mut rx = DATABASE.rx.clone();
+        let mut rx = STATE.count_rx.clone();
         let current_count = *rx.borrow();
         socket.send(current_count).await.unwrap();
 

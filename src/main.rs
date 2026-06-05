@@ -2,7 +2,7 @@
 // need dioxus
 use dioxus::prelude::*;
 
-use views::{Home, Navbar, CreateQuizz, Play};
+use views::{Home, Navbar, CreateQuizz, Play, Lobby};
 
 mod views;
 mod backend;
@@ -19,6 +19,8 @@ enum Route {
         Home {},
         #[route("/new")]
         CreateQuizz {},
+        #[route("/lobby/:quizz_id")]
+        Lobby { quizz_id: u32},
         #[route("/play/:quizz_id")]
         Play {
             quizz_id: u32

@@ -10,3 +10,6 @@ pub use create_quizz::CreateQuizz;
 
 mod play;
 pub use play::Play;
+
+mod lobby;
+pub use lobby::Lobby;

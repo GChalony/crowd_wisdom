@@ -144,7 +144,7 @@ fn Create(quizz: Signal<Quizz>) -> Element {
                 tracing::info!("Creating quizz");
                 async move {
                     let quizz_id = create_quizz(quizz.read().clone()).await.unwrap();
-                    navigator.push(Route::Play { quizz_id: quizz_id });
+                    navigator.push(Route::Lobby { quizz_id });
                 }
             },
             "Create"
