@@ -20,23 +20,8 @@ pub fn CreateQuizz() -> Element {
     };
 
     rsx! {
-        div { style: "
-                display: flex;
-                justify-content: center;
-                align-items: baseline;
-                min-height: 100vh;
-                background: linear-gradient(135deg, #1e293b, #0f172a);
-                font-family: Inter, sans-serif;
-                color: white
-            ",
-            div {
-                background_color: "rgba(255,255,255,0.08)",
-                padding: "2em",
-                border_radius: "1em",
-                backdrop_filter: "blur(12px)",
-                width: "100%",
-                box_shadow: "0 10px 30px rgba(0,0,0,0.35)",
-
+        div { class: "create-page",
+            div { class: "create-card",
                 h1 { "New Quizz" }
                 for (i , question) in quizz.read().questions.iter().enumerate() {
                     ExistingQuestion {
@@ -61,16 +46,10 @@ pub fn CreateQuizz() -> Element {
 #[component]
 pub fn ExistingQuestion(question: Question, ondelete: EventHandler<()>) -> Element {
     rsx! {
-        div { display: "flex", width: "100%", margin: "1em",
-            b { width: "40%", "{question.question}" }
-            Divider {}
-            span { style: "width: 40%", "{question.answer}" }
-            Divider {}
+        div { class: "question-row",
+            span { style: "flex:2.5;", "{question.question}" }
+            span { style: "flex:1;color:rgba(241,245,249,0.6);", "{question.answer}" }
             button {
-                border: "none",
-                background: "transparent",
-                color: "inherit",
-                cursor: "pointer",
                 onclick: move |_| { ondelete.call(()) },
                 Icon { icon: FaTrash }
             }
@@ -92,35 +71,20 @@ pub fn NewQuestion(on_add: EventHandler<Question>) -> Element {
     };
 
     rsx! {
-        div { display: "flex", padding: "1em 0", width: "100%",
+        div { class: "new-question-row",
             input {
-                style: "width: 40%",
                 r#type: "text",
-                placeholder: "Enter question text...",
+                placeholder: "Question…",
                 value: "{question_text}",
                 oninput: move |evt| question_text.set(evt.value()),
             }
-            Divider {}
             input {
-                style: "width: 40%",
                 r#type: "text",
-                placeholder: "Enter correct answer...",
+                placeholder: "Answer",
                 value: "{question_answer}",
-                oninput: move |evt| question_answer.set(evt.value().parse::<i32>().unwrap()),
+                oninput: move |evt| question_answer.set(evt.value().parse::<i32>().unwrap_or_default()),
             }
-            Divider {}
-            button {
-                style: "
-                    background-color: #4a6bff;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 0.5rem;
-                    cursor: pointer;
-                ",
-                onclick: submit,
-                Icon { icon: FaPlus }
-            }
+            button { class: "btn-add", onclick: submit, Icon { icon: FaPlus } }
         }
     }
 }
@@ -136,16 +100,7 @@ fn Divider() -> Element {
 fn Create(quizz: Signal<Quizz>) -> Element {
     let navigator = navigator();
     rsx! {
-        button {
-            padding: "1em 3em",
-            background_color: "#4a6bff",
-            style: "
-                    background-color: #4a6bff;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    cursor: pointer;
-                ",
+        button { class: "btn-submit-create",
             onclick: move |_| {
                 async move {
                     // Grab (or create) the user's persistent UUID from localStorage.

@@ -1,43 +1,524 @@
-body {
-    background-color: #0f1116;
-    color: #ffffff;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    margin: 20px;
+/* ── Fonts ───────────────────────────────────────────────────────────────── */
+@import url("https://fonts.googleapis.com/css2?family=Unkempt:wght@400;700&family=Nunito:wght@400;600;700;800&display=swap");
+
+/* ── Variables ───────────────────────────────────────────────────────────── */
+:root {
+    --bg: #0f172a;
+    --bg-gradient: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    --card-bg: rgba(255, 255, 255, 0.07);
+    --card-border: rgba(255, 255, 255, 0.11);
+    --text: #f1f5f9;
+    --text-muted: rgba(241, 245, 249, 0.5);
+    --text-faint: rgba(241, 245, 249, 0.28);
+    --blue: #3b82f6;
+    --purple: #8b5cf6;
+    --yellow: #facc15;
+    --green: #34d399;
+    --grad-primary: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    --grad-success: linear-gradient(135deg, #34d399, #059669);
+    --grad-danger: linear-gradient(135deg, #f97316, #ef4444);
+    --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    --shadow-sm: 0 4px 16px rgba(0, 0, 0, 0.3);
+    --radius: 20px;
+    --radius-sm: 12px;
+    --radius-pill: 999px;
 }
 
-#links {
-    width: 400px;
-    text-align: left;
-    font-size: x-large;
+/* ── Reset ───────────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+html {
+    background: var(--bg);
+    min-height: 100%;
+}
+
+body {
+    min-height: 100vh;
+    background: var(--bg-gradient);
+    background-attachment: fixed;
+    color: var(--text);
+    font-family: "Nunito", system-ui, sans-serif;
+    font-size: 1rem;
+    line-height: 1.65;
+}
+
+/* ── Typography ──────────────────────────────────────────────────────────── */
+h1,
+h2,
+h3,
+h4 {
+    font-family: "Unkempt", cursive;
+    line-height: 1.15;
+}
+
+/* ── Links ───────────────────────────────────────────────────────────────── */
+a {
+    color: inherit;
+    text-decoration: none;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+button {
+    font-family: "Nunito", sans-serif;
+    font-weight: 700;
+    cursor: pointer;
+    transition:
+        transform 0.15s ease,
+        box-shadow 0.15s ease,
+        opacity 0.15s ease;
+    border: none;
+    border-radius: var(--radius-sm);
     color: white;
+    background: var(--grad-primary);
+    padding: 0.75rem 1.5rem;
+}
+
+button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.35);
+}
+button:active {
+    transform: translateY(0);
+}
+
+/* ── Inputs ──────────────────────────────────────────────────────────────── */
+input {
+    font-family: "Nunito", sans-serif;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    padding: 0.65rem 1rem;
+    outline: none;
+    transition: border-color 0.2s ease;
+}
+input:focus {
+    border-color: var(--blue);
+}
+input::placeholder {
+    color: var(--text-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NAVBAR
+═══════════════════════════════════════════════════════════════════════════ */
+/* (see navbar.css) */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HOME PAGE
+═══════════════════════════════════════════════════════════════════════════ */
+
+.home-wrap {
+    max-width: 700px;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 4rem;
     display: flex;
     flex-direction: column;
+    align-items: center;
+    gap: 2.5rem;
+    text-align: center;
 }
 
-#links a {
+/* ── Hero ── */
+.hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.hero-eyebrow {
+    font-size: 0.9rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    font-weight: 700;
+}
+
+.hero-title {
+    font-family: "Unkempt", cursive;
+    font-size: clamp(3.5rem, 10vw, 6rem);
+    font-weight: 700;
+    background: var(--grad-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1.05;
+}
+
+.hero-tagline {
+    font-size: clamp(1.1rem, 3vw, 1.4rem);
+    color: var(--text-muted);
+    max-width: 480px;
+    font-style: italic;
+}
+
+/* ── Story card ── */
+.story-card {
+    background: var(--card-bg);
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius);
+    padding: 1.75rem 2rem;
+    box-shadow: var(--shadow-sm);
+    text-align: left;
+    position: relative;
+    overflow: hidden;
+}
+
+.story-card::before {
+    content: "🐂";
+    position: absolute;
+    font-size: 7rem;
+    right: -0.5rem;
+    bottom: -1.5rem;
+    opacity: 0.12;
+    pointer-events: none;
+}
+
+.story-year {
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--yellow);
+    margin-bottom: 0.6rem;
+}
+
+.story-text {
+    font-size: 1rem;
+    color: rgba(241, 245, 249, 0.85);
+    line-height: 1.75;
+}
+
+.story-text strong {
     color: white;
-    text-decoration: none;
-    margin-top: 20px;
-    margin: 10px 0px;
-    border: white 1px solid;
-    border-radius: 5px;
-    padding: 10px;
+    font-weight: 800;
 }
 
-#links a:hover {
-    background-color: #1f1f1f;
+.story-highlight {
+    display: inline-block;
+    margin-top: 1rem;
+    padding: 0.4rem 1rem;
+    border-radius: var(--radius-pill);
+    background: rgba(250, 204, 21, 0.12);
+    border: 1px solid rgba(250, 204, 21, 0.3);
+    color: var(--yellow);
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+
+/* ── Book reference ── */
+.book-ref {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.book-ref em {
+    color: rgba(241, 245, 249, 0.75);
+}
+
+/* ── CTA section ── */
+.home-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.25rem;
+    width: 100%;
+    max-width: 480px;
+}
+
+.home-actions-divider {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    width: 100%;
+    color: var(--text-faint);
+    font-size: 0.85rem;
+}
+
+.home-actions-divider::before,
+.home-actions-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--card-border);
+}
+
+/* ── Create button ── */
+/* The button has no padding; the inner <a> (Link) fills it entirely so the
+   whole surface area is clickable, not just the text. */
+.btn-create {
+    width: 100%;
+    padding: 0;
+    font-size: 1.05rem;
+    font-family: "Nunito", sans-serif;
+    font-weight: 700;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: var(--grad-primary);
+    color: white;
     cursor: pointer;
+    overflow: hidden;
+    transition:
+        transform 0.15s ease,
+        box-shadow 0.15s ease;
 }
 
-#header {
-    max-width: 1200px;
+.btn-create a {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    width: 100%;
+    padding: 1rem;
+    color: inherit;
+    text-decoration: none;
 }
 
-button {
-    background-color: #4a6bff;
+.btn-create:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
+}
+
+/* ── Join row ── */
+.join-row {
+    display: flex;
+    width: 100%;
+    gap: 0.6rem;
+}
+
+.join-row input {
+    flex: 1;
+    font-size: 1rem;
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius-sm);
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    color: white;
+}
+
+.join-row button {
+    padding: 0.85rem 1.25rem;
+    font-size: 0.95rem;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-sm);
+    color: white;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.join-row button:hover {
+    background: rgba(255, 255, 255, 0.18);
+    box-shadow: none;
+}
+
+/* ── Tagline below actions ── */
+.home-footnote {
+    font-size: 0.85rem;
+    color: var(--text-faint);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CREATE QUIZZ PAGE
+═══════════════════════════════════════════════════════════════════════════ */
+
+.create-page {
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 3rem 1.5rem;
+    font-family: "Nunito", sans-serif;
+}
+
+.create-card {
+    background: var(--card-bg);
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius);
+    padding: 2.5rem;
+    width: 100%;
+    max-width: 680px;
+    box-shadow: var(--shadow);
+}
+
+.create-card h1 {
+    font-family: "Unkempt", cursive;
+    font-size: 2.8rem;
+    margin-bottom: 1.5rem;
+}
+
+.question-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--card-border);
+}
+
+.question-row input {
+    flex: 1;
+    font-size: 0.95rem;
+}
+
+.question-row input:first-of-type {
+    flex: 2.5;
+}
+
+.question-row button {
+    padding: 0.5rem 0.75rem;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--card-border);
+    color: var(--text-muted);
+    border-radius: 8px;
+}
+
+.question-row button:hover {
+    background: rgba(239, 68, 68, 0.18);
+    color: #f87171;
+    border-color: rgba(239, 68, 68, 0.3);
+    box-shadow: none;
+    transform: none;
+}
+
+.new-question-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 0;
+}
+
+.new-question-row input {
+    font-size: 0.95rem;
+}
+.new-question-row input:first-of-type {
+    flex: 2.5;
+}
+.new-question-row input:last-of-type {
+    flex: 1;
+}
+
+.btn-add {
+    padding: 0.55rem 0.85rem;
+    background: var(--grad-primary);
+    border-radius: 8px;
+    color: white;
+    font-size: 0.95rem;
+}
+
+.btn-submit-create {
+    margin-top: 1.5rem;
+    width: 100%;
+    padding: 1rem;
+    font-size: 1.05rem;
+    font-family: "Nunito", sans-serif;
+    font-weight: 700;
+    border-radius: var(--radius-sm);
+    background: var(--grad-primary);
     color: white;
     border: none;
-    border-radius: 4px;
     cursor: pointer;
-    padding: 1em;
+    transition:
+        transform 0.15s ease,
+        box-shadow 0.15s ease;
+}
+
+.btn-submit-create:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LOBBY PAGE
+═══════════════════════════════════════════════════════════════════════════ */
+
+.lobby-page {
+    min-height: calc(100vh - 60px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 3rem 1.5rem;
+    gap: 2rem;
+}
+
+.lobby-title {
+    font-family: "Unkempt", cursive;
+    font-size: 2.5rem;
+    text-align: center;
+}
+
+.lobby-card {
+    background: var(--card-bg);
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius);
+    padding: 1.75rem 2rem;
+    min-width: 300px;
+    max-width: 420px;
+    width: 100%;
+    box-shadow: var(--shadow-sm);
+}
+
+.lobby-card h3 {
+    font-family: "Unkempt", cursive;
+    font-size: 1.5rem;
+    margin-bottom: 1rem;
+    color: var(--text-muted);
+}
+
+.player-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 1rem;
+}
+
+.player-row:last-child {
+    border-bottom: none;
+}
+
+.player-name-me {
+    font-weight: 800;
+}
+.player-badge-you {
+    color: var(--text-faint);
+    font-size: 0.78rem;
+}
+.player-badge-admin {
+    color: var(--yellow);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.btn-start {
+    padding: 1rem 2.5rem;
+    font-size: 1.1rem;
+    font-family: "Nunito", sans-serif;
+    font-weight: 700;
+    border-radius: var(--radius-sm);
+    background: var(--grad-primary);
+    color: white;
+    border: none;
+    cursor: pointer;
+    transition:
+        transform 0.15s ease,
+        box-shadow 0.15s ease;
+}
+
+.btn-start:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
 }

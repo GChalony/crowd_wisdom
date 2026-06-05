@@ -1,55 +1,80 @@
 use crate::Route;
 use dioxus::{
-    core::ElementId,
     html::{button::value, u::flex_direction},
     prelude::*,
 };
-use dioxus_free_icons::Icon;
 use dioxus_free_icons::icons::fa_solid_icons::{FaPeopleGroup, FaPlus};
+use dioxus_free_icons::Icon;
 
-/// The Home page component that will be rendered when the current route is `[Route::Home]`
 #[component]
 pub fn Home() -> Element {
     rsx! {
-        h1 { "Welcome" }
-        p {
-            "This website is here to illustrate the \"Crowd Wisdom\", or how 
-            a group of people can be smarter than even the smartest among them."
-        }
-        p {
-            "It's mostly inspired by Fouloscopie's book : "
-            em { "Do we need a boss ?" }
-        }
+        div { class: "home-wrap",
 
-        p {
-            "To discover that yourself, you can either create a new Quizz, or join one that already exists!"
-        }
-        div {
-            display: "flex",
-            justify_content: "center",
-            gap: "4em",
-            margin_top: "2em",
-
-            button {
-
-                Link {
-                    display: "flex",
-                    align_items: "space-around",
-                    gap: "10px",
-                    text_decoration: "none",
-                    color: "inherit",
-                    to: Route::CreateQuizz {},
-
-                    Icon { icon: FaPlus }
-                    "Create new quizz"
+            // ── Hero ─────────────────────────────────────────────────────────
+            div { class: "hero",
+                p { class: "hero-eyebrow", "🧠 A live social experiment" }
+                h1 { class: "hero-title", "Crowd Wisdom" }
+                p { class: "hero-tagline",
+                    "Are 100 strangers smarter than one expert?"
                 }
             }
-            JoinGame {}
-        
+
+            // ── The Galton story ─────────────────────────────────────────────
+            div { class: "story-card",
+                p { class: "story-year", "📅 Plymouth, England · 1906" }
+                p { class: "story-text",
+                    "Statistician "
+                    strong { "Francis Galton" }
+                    " asked 800 fairgoers to guess the weight of an ox.
+                     He expected the crowd to be wildly wrong.
+                     Instead, the average of all 800 guesses was "
+                    strong { "1,207 lbs" }
+                    " — just "
+                    strong { "0.8% off" }
+                    " the actual weight of 1,198 lbs.
+                     Not a single individual came that close."
+                }
+                div { class: "story-highlight",
+                    "✨ The crowd beat every individual expert"
+                }
+            }
+
+            // ── Explanation ──────────────────────────────────────────────────
+            p {
+                style: "color:rgba(241,245,249,0.7);max-width:520px;font-size:1.05rem;",
+                "This quiz lets you experience that effect live.
+                 Everyone answers the same numerical questions — then we reveal
+                 how close the crowd's average was to the truth."
+            }
+
+            // ── Book reference ───────────────────────────────────────────────
+            p { class: "book-ref",
+                "Inspired by Fouloscopie's book "
+                em { "« Does the crowd need a boss? »" }
+            }
+
+            // ── Actions ──────────────────────────────────────────────────────
+            div { class: "home-actions",
+
+                button { class: "btn-create",
+                    Link { to: Route::CreateQuizz {},
+                        Icon { icon: FaPlus }
+                        "Create a quiz"
+                    }
+                }
+
+                div { class: "home-actions-divider", "or join one" }
+
+                JoinGame {}
+            }
+
+            p { class: "home-footnote",
+                "No account needed · Completely free · Works on any device"
+            }
         }
     }
 }
-
 
 #[component]
 pub fn JoinGame() -> Element {
@@ -57,14 +82,12 @@ pub fn JoinGame() -> Element {
     let fill_game_id = move |text: Event<FormData>| {
         game_id.set(text.value());
     };
-    
+
     rsx! {
-        div { display: "flex", align_content: "center", gap: "1em",
+        div { class: "join-row",
             input {
                 r#type: "number",
-                width: "5em",
-                placeholder: "Game ID",
-                style: "width: 8em",
+                placeholder: "Game code",
                 value: "{game_id}",
                 oninput: fill_game_id,
             }
@@ -74,19 +97,17 @@ pub fn JoinGame() -> Element {
                     align_items: "center",
                     text_decoration: "none",
                     color: "inherit",
-                    gap: "10px",
+                    gap: "6px",
                     to: Route::Play {
                         quizz_id: game_id.read().parse().unwrap_or(0),
                     },
-
                     Icon { icon: FaPeopleGroup }
-                    "Join game"
+                    "Join"
                 }
             }
         }
     }
 }
-
 
 #[component]
 pub fn Column(children: Element) -> Element {
@@ -94,8 +115,6 @@ pub fn Column(children: Element) -> Element {
         div { display: "flex", flex_direction: "column", {children} }
     }
 }
-
-
 
 #[component]
 pub fn Row(children: Element) -> Element {
